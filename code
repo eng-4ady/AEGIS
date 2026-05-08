@@ -1,0 +1,170 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESP32Servo.h>
+#include <ESP_Mail_Client.h>
+
+// ================= إعداداتك الخاصة (املأ البيانات هنا) =================
+const char* ssid = "AEGIS";         
+const char* password = "3MK is back"; 
+const char* secretPassword = "123987456";        
+
+#define AUTHOR_EMAIL "ardotest5555@gmail.com"
+#define AUTHOR_PASSWORD "xgwe adih ufor exyh"  // باسوورد التطبيقات 16 حرف
+#define RECIPIENT_EMAIL "shadynoreldin512@gmail.com"
+// ====================================================================
+const int greenLed = 4;
+const int redLed = 2;
+const int servoPin = 18;
+const int buzzer = 5;
+
+Servo myServo;
+WebServer server(80);
+SMTPSession smtp;
+Session_Config config;
+
+bool isUnlocked = false;
+
+// دالة لجلب الـ Header (التصميم)
+String getHeader() {
+  return R"raw(
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='UTF-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <link href='https://fonts.googleapis.com/css2?family=Poppins:wght@300;600&display=swap' rel='stylesheet'>
+  <style>
+    * { box-sizing: border-box; transition: all 0.3s ease; }
+    body { font-family: 'Poppins', sans-serif; background: #0f172a; color: white; height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }
+    .container { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(20px); padding: 40px; 
+    border-radius: 24px; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 20px 40px rgba(0,0,0,0.3); 
+    width: 90%; max-width: 400px; text-align: center; }
+    .icon-box { font-size: 50px; margin-bottom: 20px; }
+    h2 { margin-bottom: 10px; font-weight: 600; }
+    p { opacity: 0.6; margin-bottom: 30px; }
+    input[type='password'] { width: 100%; padding: 15px; margin-bottom: 20px; border-radius: 12px; 
+    border: none; background: #334155; color: white; text-align: center; font-size: 16px; outline: none; }
+    button { width: 100%; padding: 15px; border: none; border-radius: 12px; cursor: pointer; 
+    font-weight: 600; margin-bottom: 10px; }
+    .btn-unlock { background: #38bdf8; color: #0f172a; }
+    .btn-unlock:hover { background: #7dd3fc; transform: translateY(-2px); }
+    .btn-lock { background: transparent; border: 1px solid #ef4444; color: #ef4444; }
+    .btn-lock:hover { background: #ef4444; color: white; }
+    .btn-back { display: inline-block; width: 100%; padding: 15px; margin-top: 20px; 
+    background: #334155; color: white; text-decoration: none; border-radius: 12px; }
+  </style>
+</head>
+<body>
+  <div class='container'>
+)raw";
+}
+
+String getFooter() { return "</div></body></html>"; }
+
+// الواجهة الرئيسية
+const char htmlMainPage[] PROGMEM = R"raw(
+    <div class='icon-box'>🔒</div>
+    <h2>Smart Lock</h2>
+    <p>System Status: Active</p>
+    <form action='/login' method='POST'>
+      <input type='password' name='pass' placeholder='Enter Password' required>
+      <button class='btn-unlock' type='submit'>UNLOCK</button>
+    </form>
+    <form action='/lock' method='POST'>
+      <button class='btn-lock' type='submit'>LOCK SYSTEM</button>
+    </form>
+)raw";
+
+void moveServoSlow(int targetAngle) {
+  int currentPos = myServo.read();
+  int step = (targetAngle > currentPos) ? 1 : -1;
+  while (currentPos != targetAngle) {
+    currentPos += step;
+    myServo.write(currentPos);
+    delay(15);
+  }
+}
+
+void sendEmail(String subject, String messageText) {
+  SMTP_Message message;
+  message.sender.name = "AEGIS";
+  message.sender.email = AUTHOR_EMAIL;
+  message.subject = subject;
+  message.addRecipient("Admin", RECIPIENT_EMAIL);
+  message.text.content = messageText;
+  smtp.connect(&config);
+  MailClient.sendMail(&smtp, &message);
+}
+
+void sendResponsePage(String icon, String title, String msg) {
+  String page = getHeader();
+  page += "<div class='icon-box'>" + icon + "</div>";
+  page += "<h2>" + title + "</h2>";
+  page += "<p>" + msg + "</p>";
+  page += "<a href='/' class='btn-back'>Back to Home</a>";
+  page += getFooter();
+  server.send(200, "text/html", page);
+}
+
+void handleLogin() {
+  if (server.arg("pass") == secretPassword) {
+    if (!isUnlocked) {
+      sendResponsePage("✅", "Unlocked!", "Access granted. System is opening , Coded by Shadow Hackers Team");
+      digitalWrite(greenLed, HIGH);
+      moveServoSlow(90);
+      tone(buzzer, 1000, 500);
+      isUnlocked = true;
+      sendEmail("Alert", "System Unlocked Successfully , Coded by Shadow Hackers Team");
+      delay(1000);
+      digitalWrite(greenLed, LOW);
+    } else {
+      sendResponsePage("⚠️", "Already Unlocked", "The lock is currently open , Coded by Shadow Hackers Team");
+    }
+  } else {
+    sendResponsePage("❌", "Access Denied", "Wrong password. Intruder alert sent , Coded by Shadow Hackers Team");
+    digitalWrite(redLed, HIGH);
+    tone(buzzer, 500, 300);
+    sendEmail("Alert", "Failed Login Attempt! , Coded by Shadow Hackers Team");
+    delay(1000);
+    digitalWrite(redLed, LOW);
+  }
+}
+
+void handleLock() {
+  if (isUnlocked) {
+    sendResponsePage("🔒", "Locked", "System has been secured , Coded by Shadow Hackers Team");
+    moveServoSlow(0);
+    isUnlocked = false;
+    sendEmail("Alert", "System Locked");
+  } else {
+    sendResponsePage("⚠️", "Already Locked", "The system is already secure , Coded by Shadow Hackers Team");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(greenLed, OUTPUT); pinMode(redLed, OUTPUT); pinMode(buzzer, OUTPUT);
+  ESP32PWM::allocateTimer(0);
+  myServo.setPeriodHertz(50);
+  myServo.attach(servoPin, 500, 2400);
+  myServo.write(0);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nIP: "); Serial.println(WiFi.localIP());
+
+  config.server.host_name = "smtp.gmail.com";
+  config.server.port = 465;
+  config.login.email = AUTHOR_EMAIL;
+  config.login.password = AUTHOR_PASSWORD;
+
+  server.on("/", []() { 
+    String mainPage = getHeader() + String(htmlMainPage) + getFooter();
+    server.send(200, "text/html", mainPage); 
+  });
+  server.on("/login", HTTP_POST, handleLogin);
+  server.on("/lock", HTTP_POST, handleLock);
+  server.begin();
+}
+
+void loop() { server.handleClient(); }
